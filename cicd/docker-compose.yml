@@ -1,0 +1,15 @@
+version: '3'
+services:
+  api:  # api server
+    container_name: api(@tag)
+    image: registry.example.com/test/go-app:(@tag)
+    restart: always
+    command: './app --port=80 --db_addr=mgo:27017'
+    depends_on:
+      - mgo
+
+  mgo:  # mgo server
+    container_name: mgo
+    image: mongo:latest
+    volumes:
+      - ./mgo-data/db:/data/db

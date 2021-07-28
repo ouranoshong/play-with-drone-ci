@@ -1,0 +1,110 @@
+---
+kind: pipeline
+type: docker
+name: company-test
+
+steps:
+- name: test monogo service
+  image: mongo:latest
+  commands:
+  - sleep 3
+  - mongo --host mgo --eval "{ping:1}"
+
+- name: test app
+  image: golang:latest
+  environment:
+    BRC: ${DRONE_COMMIT_BRANCH}
+    SHA: ${DRONE_COMMIT_SHA:0:8}
+    EVN: ${DRONE_BUILD_EVENT}
+    MSG: ${DRONE_COMMIT_MESSAGE}
+    TAG: ${DRONE_TAG}
+    MGO: mgo:27017
+  volumes:
+  - name: deps
+    path: /go
+  commands:
+  - cd cicd
+  - /bin/sh test_api.sh $MGO $BRC $SHA $EVN $MSG $TAG
+
+- name: build app
+  image: golang:latest
+  volumes:
+  - name: deps
+    path: /go
+  commands:
+  - cd cicd
+  - /bin/sh build_app.sh
+  when:
+    event: [tag]
+
+- name: build and push image
+  image: plugins/docker
+  settings:
+    repo: registry.example.com/test/go-app
+    registry: registry.example.com
+    username:
+      from_secret: DOCKER_USERNAME
+    password:
+      from_secret: DOCKER_PASSWORD
+    context: ./cicd
+    dockerfile: ./cicd/Dockerfile
+    tags:
+      - latest
+      - ${DRONE_TAG}
+  when:
+    event: [tag]
+
+- name: scp tar to target host
+  image: appleboy/drone-scp
+  settings:
+    host:
+      - target.example.com
+    username:
+      from_secret: HOST_USERNAME
+    password:
+      from_secret: HOST_PASSWORD
+    port: 22
+    target: /home/workspace/service/api-server
+    source: ./cicd/release.tar.gz
+  when:
+    event: [tag]
+
+- name: deploy app
+  image: appleboy/drone-ssh
+  settings:
+    host:
+      - target.example.com
+    username:
+      from_secret: HOST_USERNAME
+    password:
+      from_secret: HOST_PASSWORD
+    port: 22
+    script_stop: true
+    script:
+      - cd /home/workspace/service/api-server/cicd
+      - tar -zxvf release.tar.gz
+      - ls -l
+      - /bin/sh deploy_services.sh ${DRONE_TAG} ${DRONE_COMMIT_SHA:0:8}
+  when:
+    event: [tag]
+
+- name: notify
+  image: drillster/drone-email
+  settings:
+    from: notify@example.com
+    host: smtp.example.com
+    port: 465
+    username:
+      from_secret: SMTP_USERNAME
+    password:
+      from_secret: SMTP_PASSWORD
+    recipients:
+      - toolman@example.com
+
+services:
+- name: mgo
+  image: mongo:latest
+
+volumes:
+- name: deps
+  temp: {}
